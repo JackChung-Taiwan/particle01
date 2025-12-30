@@ -1,0 +1,815 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>圓形魔法陣邊界粒子（光暈 + 撞牆火花 + 兩手控制）</title>
+  <style>
+    html, body { margin:0; padding:0; width:100%; height:100%; overflow:hidden; background:#000; }
+    #app { position:fixed; inset:0; }
+    canvas { display:block; }
+
+    /* ✅ 右下角顯示手勢鏡頭（更小） */
+    #video{
+      position:absolute;
+      right:10px;
+      bottom:10px;
+      width:210px;
+      height:158px;
+      object-fit:cover;
+      border-radius:10px;
+      border:1px solid rgba(102,221,255,0.55);
+      box-shadow: 0 0 12px rgba(102,221,255,0.20);
+      z-index: 12;
+      transform: scaleX(-1);
+      background:#111;
+    }
+
+    /* ✅ UI 更小（控制區） */
+    #controls{
+      position:absolute; right:10px; top:10px;
+      width:270px;
+      color:#fff;
+      font-family:monospace;
+      font-size:12px;
+      background:rgba(0,0,0,0.55);
+      padding:10px 10px;
+      border-radius:10px;
+      z-index: 11;
+      border:1px solid rgba(255,255,255,0.10);
+      box-shadow: 0 0 14px rgba(0,0,0,0.30);
+    }
+    #controls .row{display:flex; align-items:center; gap:8px; margin:6px 0;}
+    #controls label{width:90px; opacity:.92;}
+    #controls input[type="range"]{flex:1;}
+    #controls span{width:54px; text-align:right; opacity:.92;}
+    #controls .hint{
+      opacity:.88;
+      font-size:11px;
+      margin-top:8px;
+      line-height:1.5;
+      padding-top:8px;
+      border-top:1px solid rgba(255,255,255,0.10);
+    }
+
+    /* ✅ 左下 Debug 更小 */
+    #debug-panel{
+      position:absolute; left:10px; bottom:10px;
+      color:#fff;
+      font-family:monospace;
+      font-size:12px;
+      background:rgba(0,0,0,0.55);
+      padding:10px 10px;
+      border-radius:10px;
+      z-index: 11;
+      min-width: 260px;
+      line-height: 1.55;
+      border:1px solid rgba(255,255,255,0.10);
+      box-shadow: 0 0 14px rgba(0,0,0,0.30);
+    }
+
+    /* ✅ 中下方標示：翊華程式設計 */
+    #footer-brand{
+      position:absolute;
+      left:50%;
+      bottom:10px;
+      transform: translateX(-50%);
+      z-index: 11;
+      color: rgba(255,255,255,0.88);
+      font-family: "Microsoft JhengHei", "PingFang TC", system-ui, sans-serif;
+      font-weight: 800;
+      font-size: 18px;
+      letter-spacing: 1px;
+      text-shadow: 0 0 10px rgba(102,221,255,0.25);
+      padding: 6px 14px;
+      border-radius: 999px;
+      background: rgba(0,0,0,0.35);
+      border: 1px solid rgba(102,221,255,0.25);
+      pointer-events:none;
+      user-select:none;
+    }
+  </style>
+</head>
+
+<body>
+  <div id="app"></div>
+
+  <!-- ✅ 右下角顯示鏡頭（兩手控制用） -->
+  <video id="video" autoplay playsinline muted></video>
+
+  <!-- ✅ UI（更小） -->
+  <div id="controls">
+    <div class="row"><label>粒子數</label><input id="pCount" type="range" min="500" max="18000" step="100" value="4000"><span id="pCountV">4000</span></div>
+    <div class="row"><label>大小</label><input id="pSize" type="range" min="0.1" max="3" step="0.05" value="0.9"><span id="pSizeV">0.90</span></div>
+    <div class="row"><label>透明度</label><input id="pOpacity" type="range" min="0.05" max="1" step="0.05" value="0.85"><span id="pOpacityV">0.85</span></div>
+
+    <div class="row"><label>張開引力</label><input id="openAttr" type="range" min="0" max="0.02" step="0.0001" value="0.0020"><span id="openAttrV">0.0020</span></div>
+    <div class="row"><label>握拳引力</label><input id="fistAttr" type="range" min="0" max="0.14" step="0.001" value="0.060"><span id="fistAttrV">0.060</span></div>
+    <div class="row"><label>旋轉</label><input id="rot" type="range" min="0" max="0.16" step="0.001" value="0.010"><span id="rotV">0.010</span></div>
+    <div class="row"><label>阻尼</label><input id="damp" type="range" min="0.80" max="0.995" step="0.001" value="0.970"><span id="dampV">0.970</span></div>
+
+    <div class="row"><label>爆炸強度</label><input id="boom" type="range" min="0" max="12" step="0.1" value="3.5"><span id="boomV">3.5</span></div>
+    <div class="row"><label>爆炸衰減</label><input id="boomDecay" type="range" min="0.80" max="0.99" step="0.005" value="0.90"><span id="boomDecayV">0.90</span></div>
+
+    <div class="hint">
+      手勢：張開＝散開追隨｜握拳＝快速集氣｜握拳瞬間＝爆炸<br>
+      兩隻手可同時控制：兩手目標會混合（更穩），任一手握拳可觸發爆炸
+    </div>
+  </div>
+
+  <div id="debug-panel">
+    <div id="dbgStatus">狀態：初始化</div>
+    <div id="dbgHand">手：未偵測</div>
+    <div id="dbgTarget">目標：—</div>
+    <div id="dbgFps">FPS：—</div>
+  </div>
+
+  <div id="footer-brand">翊華程式設計</div>
+
+  <!-- Three.js -->
+  <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+  <!-- MediaPipe Hands -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.min.js"></script>
+
+  <script>
+    // -----------------------------
+    // 0) 小工具
+    // -----------------------------
+    const $ = (id)=> document.getElementById(id);
+    const dbgStatus = $("dbgStatus");
+    const dbgHand   = $("dbgHand");
+    const dbgTarget = $("dbgTarget");
+    const dbgFps    = $("dbgFps");
+    function updateDebugStatus(t){ dbgStatus.textContent = t; }
+
+    // -----------------------------
+    // 1) 可控參數
+    // -----------------------------
+    const params = {
+      particleCount: 4000,
+      size: 0.9,
+      opacity: 0.85,
+
+      openAttraction: 0.0020,
+      fistAttraction: 0.060,
+      rotation: 0.010,
+      damping: 0.970,
+
+      explosionStrength: 3.5,
+      explosionDecay: 0.90,
+    };
+
+    function bindRange(id, key, digits=3, onChange=null) {
+      const el = $(id);
+      const v  = $(id + "V");
+      const fmt = (x)=> Number(x).toFixed(digits);
+
+      el.addEventListener("input", () => {
+        params[key] = parseFloat(el.value);
+        v.textContent = fmt(params[key]);
+        if (onChange) onChange(params[key]);
+      });
+
+      v.textContent = fmt(params[key]);
+      el.value = params[key];
+    }
+
+    // -----------------------------
+    // 2) Three.js
+    // -----------------------------
+    const app = document.getElementById("app");
+    const scene = new THREE.Scene();
+
+    const camera = new THREE.PerspectiveCamera(55, window.innerWidth/window.innerHeight, 0.1, 2000);
+    camera.position.set(0, 0, 140);
+
+    const renderer = new THREE.WebGLRenderer({ antialias:true, alpha:false });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+    app.appendChild(renderer.domElement);
+
+    scene.fog = new THREE.FogExp2(0x000000, 0.008);
+
+    // 可見範圍（由相機推回）
+    let bounds = { x: 80, y: 60, z: 120 };
+    function updateBounds() {
+      const vFov = THREE.MathUtils.degToRad(camera.fov);
+      const height = 2 * Math.tan(vFov / 2) * camera.position.z;
+      const width  = height * camera.aspect;
+      bounds.x = width / 2 - 4;
+      bounds.y = height / 2 - 4;
+      bounds.z = 120;
+    }
+    updateBounds();
+
+    // -----------------------------
+    // 3) 圓形魔法陣邊界（再放大）
+    // -----------------------------
+    let circleRadius = 50;
+
+    let magicGroup = null;
+    let ringGlow = null;
+    let ringOuter = null;
+    let ringInner = null;
+    let runeTicks = null;
+
+    function updateCircleRadius() {
+      const scale = 1.35;
+      circleRadius = Math.max(24, Math.min(bounds.x, bounds.y) * scale - 6);
+      circleRadius = Math.min(circleRadius, Math.min(bounds.x, bounds.y) - 1);
+    }
+
+    function buildRuneTicks(r, count = 140, len = 2.0) {
+      const positions = new Float32Array(count * 2 * 3);
+      for (let i=0; i<count; i++) {
+        const a = (i / count) * Math.PI * 2;
+        const cs = Math.cos(a), sn = Math.sin(a);
+
+        const x1 = cs * (r - 1.8);
+        const y1 = sn * (r - 1.8);
+        const x2 = cs * (r - 1.8 + len);
+        const y2 = sn * (r - 1.8 + len);
+
+        const k = i * 6;
+        positions[k]   = x1; positions[k+1] = y1; positions[k+2] = 0;
+        positions[k+3] = x2; positions[k+4] = y2; positions[k+5] = 0;
+      }
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+      const mat = new THREE.LineBasicMaterial({
+        color: 0x33ccff,
+        transparent: true,
+        opacity: 0.35,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false
+      });
+      return new THREE.LineSegments(geo, mat);
+    }
+
+    function disposeGroup(g){
+      g.traverse(obj => {
+        if (obj.geometry) obj.geometry.dispose();
+        if (obj.material) obj.material.dispose();
+      });
+    }
+
+    function buildMagicCircle() {
+      if (magicGroup) {
+        scene.remove(magicGroup);
+        disposeGroup(magicGroup);
+        magicGroup = null;
+      }
+
+      magicGroup = new THREE.Group();
+
+      // 外圈光暈
+      const glowGeo = new THREE.RingGeometry(circleRadius - 5.0, circleRadius + 5.0, 200);
+      const glowMat = new THREE.MeshBasicMaterial({
+        color: 0x66ddff,
+        transparent: true,
+        opacity: 0.10,
+        side: THREE.DoubleSide,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false
+      });
+      ringGlow = new THREE.Mesh(glowGeo, glowMat);
+
+      // 外圈
+      const outerGeo = new THREE.RingGeometry(circleRadius - 1.6, circleRadius + 1.6, 200);
+      const outerMat = new THREE.MeshBasicMaterial({
+        color: 0x33ccff,
+        transparent: true,
+        opacity: 0.32,
+        side: THREE.DoubleSide,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false
+      });
+      ringOuter = new THREE.Mesh(outerGeo, outerMat);
+
+      // 內圈（反向旋轉）
+      const innerR = circleRadius * 0.78;
+      const innerGeo = new THREE.RingGeometry(innerR - 1.0, innerR + 1.0, 200);
+      const innerMat = new THREE.MeshBasicMaterial({
+        color: 0x33ccff,
+        transparent: true,
+        opacity: 0.22,
+        side: THREE.DoubleSide,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false
+      });
+      ringInner = new THREE.Mesh(innerGeo, innerMat);
+
+      runeTicks = buildRuneTicks(circleRadius, 140, 2.0);
+
+      magicGroup.add(ringGlow);
+      magicGroup.add(ringOuter);
+      magicGroup.add(ringInner);
+      magicGroup.add(runeTicks);
+
+      magicGroup.position.set(0, 0, 0);
+      magicGroup.renderOrder = 0;
+      scene.add(magicGroup);
+    }
+
+    updateCircleRadius();
+    buildMagicCircle();
+
+    // -----------------------------
+    // 4) 粒子系統
+    // -----------------------------
+    let geometry, material, points;
+    let velocities = [];
+    let noise = null;
+    let particleCount = params.particleCount;
+
+    const targetPos = new THREE.Vector3(0, 0, 0);
+    const targetL = new THREE.Vector3(0, 0, 0);
+    const targetR = new THREE.Vector3(0, 0, 0);
+
+    let isFistAny = false;
+    let prevIsFistAny = false;
+    let explosionForce = 0;
+
+    const colorOpen = new THREE.Color(0x33ccff);
+    const colorFist = new THREE.Color(0xffaa33);
+    const colorBoom = new THREE.Color(0xffffff);
+
+    function buildParticles(count){
+      particleCount = count;
+
+      if (points) {
+        scene.remove(points);
+        geometry.dispose();
+        material.dispose();
+      }
+
+      geometry = new THREE.BufferGeometry();
+      const positions = new Float32Array(count * 3);
+      const colors    = new Float32Array(count * 3);
+
+      velocities = new Array(count);
+      noise = new Float32Array(count * 3);
+
+      const radius = Math.min(60, circleRadius * 0.95);
+      for (let i=0; i<count; i++){
+        const u = Math.random();
+        const v = Math.random();
+        const theta = 2 * Math.PI * u;
+        const phi = Math.acos(2*v - 1);
+        const r = radius * Math.cbrt(Math.random());
+
+        const x = r * Math.sin(phi) * Math.cos(theta);
+        const y = r * Math.sin(phi) * Math.sin(theta);
+        const z = r * Math.cos(phi);
+
+        positions[i*3] = x;
+        positions[i*3+1] = y;
+        positions[i*3+2] = z;
+
+        colors[i*3]   = colorOpen.r;
+        colors[i*3+1] = colorOpen.g;
+        colors[i*3+2] = colorOpen.b;
+
+        velocities[i] = { x: (Math.random()-0.5)*0.3, y:(Math.random()-0.5)*0.3, z:(Math.random()-0.5)*0.3 };
+
+        noise[i*3]   = (Math.random()-0.5)*0.08;
+        noise[i*3+1] = (Math.random()-0.5)*0.08;
+        noise[i*3+2] = (Math.random()-0.5)*0.08;
+      }
+
+      geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+      geometry.setAttribute("color",    new THREE.BufferAttribute(colors, 3));
+
+      material = new THREE.PointsMaterial({
+        size: params.size,
+        transparent: true,
+        opacity: params.opacity,
+        vertexColors: true,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending
+      });
+
+      points = new THREE.Points(geometry, material);
+      points.renderOrder = 1;
+      scene.add(points);
+
+      updateDebugStatus(`狀態：粒子重建完成（${count}）`);
+    }
+
+    buildParticles(particleCount);
+
+    // -----------------------------
+    // 5) 火花系統
+    // -----------------------------
+    const SPARK_MAX = 1100;
+    const SPARK_BURST = 10;
+    const SPARK_LIFE = 0.35;
+    let sparkPtr = 0;
+
+    let sparkGeo, sparkMat, sparkPoints;
+    let sparkPos, sparkCol, sparkVel, sparkLife;
+
+    function initSparks() {
+      sparkPos  = new Float32Array(SPARK_MAX * 3);
+      sparkCol  = new Float32Array(SPARK_MAX * 3);
+      sparkVel  = new Float32Array(SPARK_MAX * 3);
+      sparkLife = new Float32Array(SPARK_MAX);
+
+      sparkGeo = new THREE.BufferGeometry();
+      sparkGeo.setAttribute("position", new THREE.BufferAttribute(sparkPos, 3));
+      sparkGeo.setAttribute("color", new THREE.BufferAttribute(sparkCol, 3));
+
+      sparkMat = new THREE.PointsMaterial({
+        size: 1.6,
+        transparent: true,
+        opacity: 0.9,
+        vertexColors: true,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending
+      });
+
+      sparkPoints = new THREE.Points(sparkGeo, sparkMat);
+      sparkPoints.renderOrder = 2;
+      scene.add(sparkPoints);
+
+      for (let i=0;i<SPARK_MAX;i++) {
+        sparkLife[i] = 0;
+        sparkPos[i*3] = 99999; sparkPos[i*3+1] = 99999; sparkPos[i*3+2] = 99999;
+      }
+      sparkGeo.attributes.position.needsUpdate = true;
+    }
+
+    function spawnSparks(x, y, z, nx, ny) {
+      const tx = -ny, ty = nx;
+      for (let k=0; k<SPARK_BURST; k++) {
+        const i = sparkPtr;
+        sparkPtr = (sparkPtr + 1) % SPARK_MAX;
+
+        sparkPos[i*3]   = x + nx * 0.8;
+        sparkPos[i*3+1] = y + ny * 0.8;
+        sparkPos[i*3+2] = z;
+
+        const s1 = 35 + Math.random()*55;
+        const s2 = (Math.random()-0.5) * 50;
+        const up = (Math.random()-0.5) * 12;
+
+        sparkVel[i*3]   = nx * s1 + tx * s2;
+        sparkVel[i*3+1] = ny * s1 + ty * s2;
+        sparkVel[i*3+2] = up;
+
+        sparkCol[i*3]   = 1.0;
+        sparkCol[i*3+1] = 0.85 + Math.random()*0.15;
+        sparkCol[i*3+2] = 0.25 + Math.random()*0.15;
+
+        sparkLife[i] = SPARK_LIFE;
+      }
+      sparkGeo.attributes.position.needsUpdate = true;
+      sparkGeo.attributes.color.needsUpdate = true;
+    }
+
+    function updateSparks(dt) {
+      const drag = 0.90, gravity = -28;
+      for (let i=0; i<SPARK_MAX; i++) {
+        if (sparkLife[i] <= 0) continue;
+
+        sparkLife[i] -= dt;
+        if (sparkLife[i] <= 0) {
+          sparkPos[i*3] = 99999; sparkPos[i*3+1] = 99999; sparkPos[i*3+2] = 99999;
+          continue;
+        }
+
+        sparkVel[i*3]   *= drag;
+        sparkVel[i*3+1] *= drag;
+        sparkVel[i*3+2]  = sparkVel[i*3+2] * drag + gravity * dt;
+
+        sparkPos[i*3]   += sparkVel[i*3] * dt;
+        sparkPos[i*3+1] += sparkVel[i*3+1] * dt;
+        sparkPos[i*3+2] += sparkVel[i*3+2] * dt;
+
+        const t = sparkLife[i] / SPARK_LIFE;
+        sparkCol[i*3]   = 1.0 * t;
+        sparkCol[i*3+1] = 0.9 * t;
+        sparkCol[i*3+2] = 0.35 * t;
+      }
+
+      sparkGeo.attributes.position.needsUpdate = true;
+      sparkGeo.attributes.color.needsUpdate = true;
+    }
+
+    initSparks();
+
+    // UI 綁定
+    bindRange("pSize", "size", 2, (v)=> material.size = v);
+    bindRange("pOpacity", "opacity", 2, (v)=> material.opacity = v);
+    bindRange("openAttr", "openAttraction", 4);
+    bindRange("fistAttr", "fistAttraction", 3);
+    bindRange("rot", "rotation", 3);
+    bindRange("damp", "damping", 3);
+    bindRange("boom", "explosionStrength", 1);
+    bindRange("boomDecay", "explosionDecay", 2);
+    bindRange("pCount", "particleCount", 0, (v)=> buildParticles(Math.floor(v)));
+
+    // 爆炸
+    function triggerExplosion(strengthMul = 1) {
+      explosionForce = params.explosionStrength * strengthMul;
+      const posAttr = geometry.attributes.position;
+
+      for (let i=0; i<particleCount; i++){
+        const px = posAttr.getX(i);
+        const py = posAttr.getY(i);
+        const pz = posAttr.getZ(i);
+
+        let dx = px - targetPos.x;
+        let dy = py - targetPos.y;
+        let dz = pz - targetPos.z;
+
+        const len = Math.hypot(dx, dy, dz) || 1;
+        dx /= len; dy /= len; dz /= len;
+
+        const jitter = 0.6 + Math.random()*0.4;
+        const kick = explosionForce * jitter;
+
+        velocities[i].x += dx * kick;
+        velocities[i].y += dy * kick;
+        velocities[i].z += dz * kick;
+      }
+
+      updateDebugStatus("狀態：💥 爆炸！（任一手握拳瞬間）");
+      setTimeout(()=> updateDebugStatus(isFistAny ? "狀態：握拳（集氣）" : "狀態：張開手掌（散開追隨）"), 650);
+    }
+
+    // -----------------------------
+    // 手勢（兩手）
+    // -----------------------------
+    const video = document.getElementById("video");
+    let lastHandTime = 0;
+
+    function dist2(a,b){
+      const dx=a.x-b.x, dy=a.y-b.y;
+      return dx*dx+dy*dy;
+    }
+
+    function isFistFromLandmarks(lm){
+      const wrist = lm[0];
+      const palm  = lm[9];
+      const idxTip = lm[8], midTip=lm[12], ringTip=lm[16], pinTip=lm[20];
+
+      const base = Math.max(1e-6, dist2(palm, wrist));
+      const d = (dist2(idxTip,palm)+dist2(midTip,palm)+dist2(ringTip,palm)+dist2(pinTip,palm))/4;
+      return (d / base) < 0.55;
+    }
+
+    function setTargetFromIndexTip(lm, outVec){
+      const tip = lm[8];
+      const nx = (tip.x - 0.5) * 2;
+      const ny = (0.5 - tip.y) * 2;
+
+      outVec.set(nx * 70, ny * 50, 0);
+
+      const rr = Math.hypot(outVec.x, outVec.y);
+      const maxR = circleRadius * 0.92;
+      if (rr > maxR) {
+        outVec.x = outVec.x / (rr + 1e-6) * maxR;
+        outVec.y = outVec.y / (rr + 1e-6) * maxR;
+      }
+    }
+
+    const hands = new Hands({
+      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+    });
+
+    hands.setOptions({
+      maxNumHands: 2,
+      modelComplexity: 1,
+      minDetectionConfidence: 0.7,
+      minTrackingConfidence: 0.6
+    });
+
+    hands.onResults((results) => {
+      const lms = results.multiHandLandmarks || [];
+      if (lms.length === 0) {
+        dbgHand.textContent = "手：未偵測";
+        return;
+      }
+
+      lastHandTime = performance.now();
+
+      let fistCount = 0;
+      let has1 = false, has2 = false;
+
+      if (lms[0]) {
+        setTargetFromIndexTip(lms[0], targetL);
+        has1 = true;
+        if (isFistFromLandmarks(lms[0])) fistCount++;
+      }
+
+      if (lms[1]) {
+        setTargetFromIndexTip(lms[1], targetR);
+        has2 = true;
+        if (isFistFromLandmarks(lms[1])) fistCount++;
+      }
+
+      if (has1 && has2) {
+        targetPos.copy(targetL).add(targetR).multiplyScalar(0.5);
+      } else if (has1) {
+        targetPos.copy(targetL);
+      } else if (has2) {
+        targetPos.copy(targetR);
+      }
+
+      prevIsFistAny = isFistAny;
+      isFistAny = (fistCount > 0);
+
+      if (!prevIsFistAny && isFistAny) {
+        const mul = (fistCount >= 2) ? 1.35 : 1.0;
+        triggerExplosion(mul);
+      }
+
+      const handText = (lms.length >= 2)
+        ? `手：2（握拳 ${fistCount}）`
+        : `手：1（${isFistAny ? "握拳" : "張開"}）`;
+      dbgHand.textContent = handText;
+      dbgTarget.textContent = `目標：x=${targetPos.x.toFixed(1)} y=${targetPos.y.toFixed(1)}`;
+    });
+
+    const cam = new Camera(video, {
+      onFrame: async () => { await hands.send({ image: video }); },
+      width: 640,
+      height: 480
+    });
+
+    cam.start().then(()=>{
+      updateDebugStatus("狀態：相機已啟動（右下角顯示鏡頭）");
+    }).catch((e)=>{
+      updateDebugStatus("狀態：相機啟動失敗（請允許相機權限）");
+      console.error(e);
+    });
+
+    // -----------------------------
+    // 主迴圈
+    // -----------------------------
+    let lastT = performance.now();
+    let fpsAcc = 0, fpsN = 0, fpsLast = performance.now();
+
+    function animate(){
+      requestAnimationFrame(animate);
+
+      const now = performance.now();
+      const dt = Math.min(0.033, (now - lastT) / 1000);
+      lastT = now;
+
+      fpsAcc += 1/dt; fpsN++;
+      if (now - fpsLast > 500) {
+        dbgFps.textContent = `FPS：${(fpsAcc/fpsN).toFixed(1)}`;
+        fpsAcc = 0; fpsN = 0; fpsLast = now;
+      }
+
+      if (now - lastHandTime > 650) {
+        targetPos.lerp(new THREE.Vector3(0,0,0), 0.03);
+        isFistAny = false;
+      }
+
+      if (explosionForce > 0.0001) explosionForce *= params.explosionDecay;
+      else explosionForce = 0;
+
+      const posAttr = geometry.attributes.position;
+      const colAttr = geometry.attributes.color;
+
+      const targetColor = explosionForce > 0.15 ? colorBoom : (isFistAny ? colorFist : colorOpen);
+
+      let attraction = isFistAny ? params.fistAttraction : params.openAttraction;
+      let rotationSpeed = isFistAny ? (params.rotation * 4.0) : params.rotation;
+      let damping = isFistAny ? Math.min(params.damping, 0.93) : params.damping;
+
+      const dampPerFrame = Math.pow(damping, dt * 60);
+
+      for (let i=0; i<particleCount; i++){
+        const px = posAttr.getX(i);
+        const py = posAttr.getY(i);
+        const pz = posAttr.getZ(i);
+
+        const dx = targetPos.x - px;
+        const dy = targetPos.y - py;
+        const dz = targetPos.z - pz;
+        const dist = Math.hypot(dx, dy, dz) + 1e-6;
+
+        const swirlX = -dy / dist;
+        const swirlY =  dx / dist;
+
+        if (explosionForce > 0) {
+          const falloff = Math.exp(-dist * 0.18);
+          velocities[i].x += (px - targetPos.x) * 0.02 * explosionForce * falloff;
+          velocities[i].y += (py - targetPos.y) * 0.02 * explosionForce * falloff;
+          velocities[i].z += (pz - targetPos.z) * 0.02 * explosionForce * falloff;
+        }
+
+        velocities[i].x += (dx / dist) * attraction;
+        velocities[i].y += (dy / dist) * attraction;
+        velocities[i].z += (dz / dist) * attraction * 0.6;
+
+        velocities[i].x += swirlX * rotationSpeed;
+        velocities[i].y += swirlY * rotationSpeed;
+
+        velocities[i].x *= dampPerFrame;
+        velocities[i].y *= dampPerFrame;
+        velocities[i].z *= dampPerFrame;
+
+        let nx = px + velocities[i].x * (dt * 60);
+        let ny = py + velocities[i].y * (dt * 60);
+        let nz = pz + velocities[i].z * (dt * 60);
+
+        const r = circleRadius;
+        const rr = Math.hypot(nx, ny);
+
+        const softStart = r * 0.86;
+        if (rr > softStart) {
+          const t = (rr - softStart) / (r - softStart + 1e-6);
+          const push = 0.0018 * t * t;
+          const ux = nx / (rr + 1e-6);
+          const uy = ny / (rr + 1e-6);
+          velocities[i].x -= ux * push * (dt * 60);
+          velocities[i].y -= uy * push * (dt * 60);
+        }
+
+        if (rr > r) {
+          const ux = nx / (rr + 1e-6);
+          const uy = ny / (rr + 1e-6);
+
+          nx = ux * r;
+          ny = uy * r;
+
+          spawnSparks(nx, ny, nz, ux, uy);
+
+          const vn = velocities[i].x * ux + velocities[i].y * uy;
+          velocities[i].x -= (1.0 + 0.45) * vn * ux;
+          velocities[i].y -= (1.0 + 0.45) * vn * uy;
+
+          const swirlEdge = 0.03;
+          velocities[i].x += (-uy) * swirlEdge * (isFistAny ? 1.6 : 1.0);
+          velocities[i].y += ( ux) * swirlEdge * (isFistAny ? 1.6 : 1.0);
+        }
+
+        if (nz > bounds.z)  { nz = bounds.z;  velocities[i].z *= -0.25; }
+        if (nz < -bounds.z) { nz = -bounds.z; velocities[i].z *= -0.25; }
+
+        posAttr.setXYZ(i, nx, ny, nz);
+
+        const cr = colAttr.getX(i);
+        const cg = colAttr.getY(i);
+        const cb = colAttr.getZ(i);
+        const lerp = 0.08;
+
+        const nr = cr + (targetColor.r - cr) * lerp;
+        const ng = cg + (targetColor.g - cg) * lerp;
+        const nb = cb + (targetColor.b - cb) * lerp;
+
+        colAttr.setXYZ(i, nr + noise[i*3], ng + noise[i*3+1], nb + noise[i*3+2]);
+      }
+
+      posAttr.needsUpdate = true;
+      colAttr.needsUpdate = true;
+
+      updateSparks(dt);
+
+      // 魔法陣動畫
+      if (magicGroup) {
+        const spin = 0.003 * (dt * 60);
+        ringOuter.rotation.z += spin;
+        ringInner.rotation.z -= spin * 1.4;
+        runeTicks.rotation.z += spin * 0.6;
+
+        const base = 0.18;
+        const fistBoost = isFistAny ? 0.18 : 0.0;
+        const boomBoost = Math.min(0.35, explosionForce * 0.10);
+
+        ringOuter.material.opacity = base + fistBoost + boomBoost;
+        ringInner.material.opacity = base * 0.8 + fistBoost * 0.55 + boomBoost * 0.65;
+        runeTicks.material.opacity = base + fistBoost * 0.8 + boomBoost;
+        ringGlow.material.opacity = 0.10 + fistBoost * 0.22 + boomBoost * 0.65;
+
+        const pulse = 1 + Math.min(0.10, explosionForce * 0.02);
+        magicGroup.scale.set(pulse, pulse, 1);
+      }
+
+      renderer.render(scene, camera);
+    }
+
+    animate();
+
+    // Resize
+    window.addEventListener("resize", () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+
+      updateBounds();
+      updateCircleRadius();
+      buildMagicCircle();
+    });
+
+    updateDebugStatus("狀態：載入完成，等待相機權限…");
+    dbgTarget.textContent = "目標：—";
+  </script>
+</body>
+</html>
